@@ -25,6 +25,7 @@ function Component(props, context, updater) {
   this.refs = emptyObject;
   // We initialize the default updater but the real one gets injected by the
   // renderer.
+  // 不同平台 updater 不一样
   this.updater = updater || ReactNoopUpdateQueue;
 }
 
