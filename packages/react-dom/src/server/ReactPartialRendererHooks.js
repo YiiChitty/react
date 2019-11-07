@@ -57,6 +57,11 @@ let isInHookUserCodeInDev = false;
 // In DEV, this is the name of the currently executing primitive hook
 let currentHookNameInDev: ?string;
 
+/**
+ * 返回当前正在渲染的组件对应的Fiber，
+ * 也就是当前FunctionalComponent对应的Fiber，
+ * 在prepareToUseHooks时设置
+ */
 function resolveCurrentlyRenderingComponent(): Object {
   invariant(
     currentlyRenderingComponent !== null,
@@ -132,7 +137,33 @@ function createHook(): Hook {
   };
 }
 
+
+/**
+ * 该方法主要就是用来生产workInProgressHook对象的
+ *
+ * 这个跟Fiber的workInProgress非常类似
+ * 对于整个React应用，我们把每个节点按照Fiber对象的形式来进行拆分然后进行更新，以及信息记录，
+ *
+ * 比如两个最重要的数据记录：
+ * Fiber.memoizedState
+ * Fiber.memoizedProps
+ *
+ * 分别记录上次渲染时的state和props。
+ */
 function createWorkInProgressHook(): Hook {
+
+  /**
+   * workInProgressHook 在每次 finishHooks 的时候会被重置为 null
+   * 所以对于每个 FunctionalComponent 中的第一个 Hooks 调用
+   * 他调用 createWorkInProgressHook 的时候肯定符合 workInProgressHook === null
+   *
+   * 如果 workInProgressHook === null 并且 firstWorkInProgressHook === null，那么就不是 re-render
+   * 如果 workInProgressHook === null 但是 firstWorkInProgressHook 存在，那么就是 re-render
+   *
+   * 如果 workInProgressHook 存在，但 workInProgressHook.next 不存在，那么也不是 re-render。
+   * 而 workInProgressHook.next 调用开始，那么就是 re-render。
+   *
+   * */
   if (workInProgressHook === null) {
     // This is the first hook in the list
     if (firstWorkInProgressHook === null) {
@@ -180,6 +211,12 @@ export function finishHooks(
   // This must be called after every function component to prevent hooks from
   // being used in classes.
 
+
+  /**
+   * 如果在一次更新中（也就是调用 FunctionalComponent 的过程中）
+   * 如果直接调用了类似 setState 的 Hooks API 产生了新的更新，
+   * 则会在当前的渲染周期中直接执行更新。
+   */
   while (didScheduleRenderPhaseUpdate) {
     // Updates were scheduled during the render phase. They are stored in
     // the `renderPhaseUpdates` map. Call the component again, reusing the
@@ -273,12 +310,21 @@ export function useReducer<S, I, A>(
   }
   currentlyRenderingComponent = resolveCurrentlyRenderingComponent();
   workInProgressHook = createWorkInProgressHook();
+
+  /**
+   * 这里分两种情况：第一次渲染和更新，
+   * Whether the work-in-progress hook is a re-rendered hook
+   */
   if (isReRender) {
     // This is a re-render. Apply the new render phase updates to the previous
     // current hook.
+
+    // 更新：存在quene
     const queue: UpdateQueue<A> = (workInProgressHook.queue: any);
     const dispatch: Dispatch<A> = (queue.dispatch: any);
     if (renderPhaseUpdates !== null) {
+      // 当前更新周期中又产生了新的更新
+      // 就继续执行这些更新知道当前渲染周期中没有更新为止
       // Render phase updates are stored in a map of queue -> linked list
       const firstRenderPhaseUpdate = renderPhaseUpdates.get(queue);
       if (firstRenderPhaseUpdate !== undefined) {
@@ -307,6 +353,11 @@ export function useReducer<S, I, A>(
     }
     return [workInProgressHook.memoizedState, dispatch];
   } else {
+    /**
+     * 第一次渲染：主要就是初始化操作
+     * 这里初始化 initialState，
+     * 并将其记录在 workInProgressHook.memoizedState 上
+     */
     if (__DEV__) {
       isInHookUserCodeInDev = true;
     }
@@ -325,15 +376,28 @@ export function useReducer<S, I, A>(
       isInHookUserCodeInDev = false;
     }
     workInProgressHook.memoizedState = initialState;
+
+
+    /**
+     * queue
+     * last: 指针
+     * dispatch：记录更新 state 的方法
+     */
     const queue: UpdateQueue<A> = (workInProgressHook.queue = {
       last: null,
       dispatch: null,
     });
+
+    /**
+     * dispatch
+     */
     const dispatch: Dispatch<A> = (queue.dispatch = (dispatchAction.bind(
       null,
       currentlyRenderingComponent,
       queue,
     ): any));
+
+    // const [state, updateState] = useState('default')
     return [workInProgressHook.memoizedState, dispatch];
   }
 }
@@ -412,6 +476,7 @@ function dispatchAction<A>(
       'an infinite loop.',
   );
 
+  // 判断这个更新是否是在渲染阶段中产生的
   if (componentIdentity === currentlyRenderingComponent) {
     // This is a render phase update. Stash it in a lazily-created map of
     // queue -> linked list of updates. After this render pass, we'll restart
@@ -421,6 +486,8 @@ function dispatchAction<A>(
       action,
       next: null,
     };
+
+    // 所有更新过程中产生的更新记录在 renderPhaseUpdates 这个 Map 上，以每个 Hook 的 queue 为 key。
     if (renderPhaseUpdates === null) {
       renderPhaseUpdates = new Map();
     }
@@ -428,6 +495,7 @@ function dispatchAction<A>(
     if (firstRenderPhaseUpdate === undefined) {
       renderPhaseUpdates.set(queue, update);
     } else {
+      // 循环链表
       // Append the update to the end of the list.
       let lastRenderPhaseUpdate = firstRenderPhaseUpdate;
       while (lastRenderPhaseUpdate.next !== null) {
